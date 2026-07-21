@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>스낵앤가든 운영관리</title>
+<link rel="stylesheet" href="css/style.css"/>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+
+<!-- ══════ 로그인 ══════ -->
+<div id="login-screen">
+  <div class="login-card">
+    <div class="login-brand">
+      <div class="mark">S</div>
+      <h1>SNACK &amp; GARDEN</h1>
+      <p>운영관리 시스템</p>
+    </div>
+    <div id="demo-banner" class="demo-banner" style="display:none">
+      데모 모드로 실행 중입니다. 데이터는 이 브라우저에만 저장됩니다.<br/>
+      아무 이메일/비밀번호나 입력해도 로그인됩니다.
+    </div>
+    <div class="field-group"><label>이메일</label><input type="email" id="login-email" placeholder="you@snackgarden.com"/></div>
+    <div class="field-group"><label>비밀번호</label><input type="password" id="login-pw" placeholder="••••••••" onkeydown="if(event.key==='Enter')doLogin()"/></div>
+    <button class="btn btn-primary btn-block" style="margin-top:6px" onclick="doLogin()">로그인 →</button>
+  </div>
+</div>
+
+<!-- ══════ 앱 ══════ -->
+<div id="app">
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-brand">
+        <div class="mark">S</div>
+        <div><h1>SNACK &amp; GARDEN</h1><p>운영관리</p></div>
+      </div>
+      <nav class="nav">
+        <div class="nav-item active" data-page="dashboard"><span class="dot"></span>대시보드</div>
+        <div class="nav-item" data-page="crews"><span class="dot"></span>크루 관리</div>
+        <div class="nav-item" data-page="schedule"><span class="dot"></span>일정 · 할일</div>
+      </nav>
+      <div class="sidebar-foot">
+        <div class="user-chip">
+          <div class="user-avatar" id="sidebar-avatar">J</div>
+          <div><div class="user-name" id="sidebar-name">제이미</div><div class="user-role" id="sidebar-role">팀리더</div></div>
+        </div>
+        <button class="logout-btn" onclick="doLogout()">로그아웃</button>
+      </div>
+    </aside>
+
+    <div class="main">
+      <div class="topbar">
+        <button class="menu-toggle" onclick="openSidebar()">☰</button>
+        <span class="topbar-title" id="topbar-title">대시보드</span>
+        <span class="topbar-time" id="topbar-time"></span>
+      </div>
+
+      <div class="content">
+
+        <!-- 대시보드 -->
+        <div class="page active" id="page-dashboard">
+          <div class="page-head"><h1 class="page-title">대시보드</h1></div>
+          <p class="page-sub">스낵앤가든 팀 운영 현황을 한눈에 확인하세요.</p>
+          <div class="stat-grid" id="stat-grid"><div class="spinner"></div></div>
+          <div class="grid-2" style="margin-bottom:14px">
+            <div class="card">
+              <div class="card-title">장애 / 비장애 현황</div>
+              <div style="display:grid;grid-template-columns:120px 1fr;gap:14px;align-items:center">
+                <div style="position:relative;height:120px"><canvas id="chart-donut"></canvas></div>
+                <div id="donut-legend"></div>
+              </div>
+            </div>
+            <div class="card">
+              <div class="card-title">이번 주 일정</div>
+              <div id="dash-schedule"></div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-title">진행 중인 할일</div>
+            <div id="dash-todos"></div>
+          </div>
+        </div>
+
+        <!-- 크루 관리 -->
+        <div class="page" id="page-crews">
+          <div class="page-head">
+            <h1 class="page-title">크루 관리</h1>
+            <button class="btn btn-primary" onclick="openCrewModal()">+ 크루 등록</button>
+          </div>
+          <p class="page-sub">등록된 크루를 확인하고 관리합니다.</p>
+          <div class="filter-bar">
+            <select id="crew-filter-job" onchange="renderCrews()">
+              <option value="">전체 직무</option><option value="스낵">스낵</option><option value="가든">가든</option><option value="총무지원">총무지원</option>
+            </select>
+            <select id="crew-filter-status" onchange="renderCrews()">
+              <option value="">전체 상태</option><option>재직</option><option>휴직</option><option>퇴사</option>
+            </select>
+            <div class="crew-search-row"><span class="ic">⌕</span><input type="text" id="crew-search" placeholder="이름 검색…" oninput="renderCrews()"/></div>
+          </div>
+          <div id="crew-table-wrap"><div class="spinner"></div></div>
+        </div>
+
+        <!-- 일정 · 할일 -->
+        <div class="page" id="page-schedule">
+          <div class="page-head"><h1 class="page-title">일정 · 할일</h1></div>
+          <p class="page-sub">주간 일정과 월간 할일을 관리합니다.</p>
+          <div class="sched-tabs">
+            <div class="sched-tab active" data-tab="schedule" onclick="switchSchedTab('schedule')">주간 일정</div>
+            <div class="sched-tab" data-tab="todo" onclick="switchSchedTab('todo')">할일 달력</div>
+          </div>
+
+          <div id="sched-panel-schedule">
+            <div class="week-nav">
+              <button class="btn-icon" onclick="weekNav(-1)">←</button>
+              <span class="label" id="week-label"></span>
+              <button class="btn-icon" onclick="weekNav(1)">→</button>
+              <button class="btn btn-outline btn-sm" onclick="weekToday()">오늘</button>
+            </div>
+            <div class="week-grid" id="week-grid"></div>
+          </div>
+
+          <div id="sched-panel-todo" style="display:none">
+            <div class="todo-layout">
+              <div>
+                <div class="week-nav">
+                  <button class="btn-icon" onclick="calNav(-1)">←</button>
+                  <span class="label" id="cal-label"></span>
+                  <button class="btn-icon" onclick="calNav(1)">→</button>
+                  <button class="btn btn-outline btn-sm" onclick="calToday()">오늘</button>
+                </div>
+                <div class="cal-grid" id="cal-grid-head">
+                  <div class="cal-dow" style="color:var(--danger)">일</div><div class="cal-dow">월</div><div class="cal-dow">화</div>
+                  <div class="cal-dow">수</div><div class="cal-dow">목</div><div class="cal-dow">금</div><div class="cal-dow" style="color:var(--job-support)">토</div>
+                </div>
+                <div class="cal-grid" id="cal-grid" style="margin-top:-1px"></div>
+              </div>
+              <div>
+                <div class="card" style="margin-bottom:12px">
+                  <div class="card-title" id="todo-day-label">날짜를 선택하세요</div>
+                  <div id="todo-day-list"></div>
+                  <button class="btn btn-outline btn-sm btn-block" id="todo-add-btn" style="margin-top:8px" onclick="openTodoModal()">+ 할일 추가</button>
+                </div>
+                <div class="card">
+                  <div class="card-title">진행 중 · 미완료</div>
+                  <div id="todo-ongoing"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════ 모달: 크루 ══════ -->
+<div class="modal-overlay" id="modal-crew">
+  <div class="modal">
+    <div class="modal-header"><span class="modal-title" id="modal-crew-title">신규 크루 등록</span><button class="btn-icon" onclick="closeModal('modal-crew')">✕</button></div>
+    <div class="modal-body">
+      <div class="form-grid">
+        <div class="field-group"><label>이름 *</label><input id="c-name"/></div>
+        <div class="field-group"><label>소속팀</label><input id="c-team"/></div>
+        <div class="field-group"><label>직무유형</label>
+          <select id="c-job"><option value="">선택</option><option value="스낵">스낵</option><option value="가든">가든</option><option value="총무지원">총무지원</option></select>
+        </div>
+        <div class="field-group"><label>계약현황</label>
+          <select id="c-contract"><option value="">선택</option><option>정규</option><option>계약</option><option>단기계약</option></select>
+        </div>
+        <div class="field-group"><label>업무시간</label><input id="c-hours" placeholder="09:00~18:00"/></div>
+        <div class="field-group"><label>입사일</label><input type="date" id="c-joindate"/></div>
+        <div class="field-group"><label>연락처</label><input id="c-phone" placeholder="010-0000-0000"/></div>
+        <div class="field-group"><label>상태</label>
+          <select id="c-status"><option>재직</option><option>휴직</option><option>퇴사</option></select>
+        </div>
+        <div class="field-group"><label>장애여부</label>
+          <select id="c-dis"><option value="">선택</option><option value="장애">장애</option><option value="비장애">비장애</option></select>
+        </div>
+        <div class="field-group"><label>장애유형</label><input id="c-distype" placeholder="지체, 시각 등"/></div>
+      </div>
+      <input type="hidden" id="c-id"/>
+      <div class="form-actions">
+        <button class="btn btn-danger" id="crew-del-btn" onclick="deleteCrewFromModal()">삭제</button>
+        <div style="flex:1"></div>
+        <button class="btn btn-outline" onclick="closeModal('modal-crew')">취소</button>
+        <button class="btn btn-primary" onclick="saveCrew()">저장</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════ 모달: 일정 ══════ -->
+<div class="modal-overlay" id="modal-schedule">
+  <div class="modal" style="width:min(440px,100%)">
+    <div class="modal-header"><span class="modal-title" id="modal-sched-title">일정 등록</span><button class="btn-icon" onclick="closeModal('modal-schedule')">✕</button></div>
+    <div class="modal-body">
+      <div class="field-group"><label>제목 *</label><input id="sc-title"/></div>
+      <div class="form-grid">
+        <div class="field-group"><label>날짜 *</label><input type="date" id="sc-date"/></div>
+        <div class="field-group"><label>시간</label><input type="time" id="sc-time"/></div>
+      </div>
+      <div class="field-group"><label>메모</label><textarea id="sc-memo" rows="3"></textarea></div>
+      <input type="hidden" id="sc-id"/>
+      <div class="form-actions">
+        <button class="btn btn-outline" onclick="closeModal('modal-schedule')">취소</button>
+        <button class="btn btn-primary" onclick="saveSched()">저장</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════ 모달: 할일 ══════ -->
+<div class="modal-overlay" id="modal-todo">
+  <div class="modal" style="width:min(440px,100%)">
+    <div class="modal-header"><span class="modal-title" id="modal-todo-title">할일 등록</span><button class="btn-icon" onclick="closeModal('modal-todo')">✕</button></div>
+    <div class="modal-body">
+      <div class="field-group"><label>할일 제목 *</label><input id="td-title"/></div>
+      <div class="form-grid">
+        <div class="field-group"><label>우선순위</label>
+          <select id="td-priority"><option value="높음">높음</option><option value="보통" selected>보통</option><option value="낮음">낮음</option></select>
+        </div>
+        <div class="field-group"><label>마감일</label><input type="date" id="td-due"/></div>
+      </div>
+      <div class="field-group"><label>메모</label><textarea id="td-memo" rows="3"></textarea></div>
+      <input type="hidden" id="td-id"/>
+      <div class="form-actions">
+        <button class="btn btn-outline" onclick="closeModal('modal-todo')">취소</button>
+        <button class="btn btn-primary" onclick="saveTodo()">저장</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════ 삭제 확인 ══════ -->
+<div class="modal-overlay" id="modal-confirm">
+  <div class="modal" style="width:min(380px,100%)">
+    <div class="modal-header"><span class="modal-title">삭제 확인</span><button class="btn-icon" onclick="closeModal('modal-confirm')">✕</button></div>
+    <div class="modal-body">
+      <p id="confirm-msg" style="font-size:.86rem;color:var(--text-secondary);line-height:1.7;margin-bottom:18px"></p>
+      <div class="form-actions">
+        <button class="btn btn-outline" onclick="closeModal('modal-confirm')">취소</button>
+        <button class="btn btn-danger" id="confirm-ok">삭제</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="toast-container"></div>
+
+<script src="js/api.js"></script>
+<script src="js/app.js"></script>
+<script src="js/crews.js"></script>
+<script src="js/schedule.js"></script>
+</body>
+</html>
