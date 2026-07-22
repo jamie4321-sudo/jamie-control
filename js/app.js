@@ -1,97 +1,163 @@
 // ============================================================
-// Api.gs — 깃허브(정적 호스팅)에서 fetch()로 호출하기 위한 JSON API 라우터
-//
-// 사용법:
-//   1. 기존 Apps Script 프로젝트(Code.gs, Code_NewModules.gs가 있는 곳)에
-//      이 파일을 새 스크립트 파일로 추가하세요.
-//   2. 배포 > 새 배포 > 웹앱으로 배포
-//        - 실행 대상: 나(본인 계정)
-//        - 액세스 권한: 전체 공개(익명 포함)
-//   3. 생성된 /exec URL을 깃허브 쪽 js/api.js 의 GAS_URL 에 붙여넣으세요.
-//
-// ★ 기존 doGet(e)이 index.html을 서빙하던 것과 충돌하지 않도록,
-//    이 라우터는 e.parameter.fn 또는 POST body의 fn 값이 있을 때만 동작하고,
-//    없을 때는 기존 동작(HTML 서빙)으로 자연스럽게 넘어갑니다.
-//    (아래 doGet은 기존 Code.gs의 doGet과 이름이 겹치므로,
-//     Code.gs 쪽 doGet은 함수명을 doGetPage 등으로 바꾸거나
-//     이 파일의 라우팅 분기를 Code.gs의 doGet 안에 합쳐 넣으세요.)
+// app.js — 코어: 인증 / 네비게이션 / 대시보드 / 공통 유틸
 // ============================================================
 
-// 읽기 전용(GET) 허용 함수 목록
-const API_GET_WHITELIST = [
-  'getDashboardData', 'getCrews', 'getCrew', 'getCrewProfile',
-  'getInterviews', 'getEvaluations', 'getIssues', 'getAttendance',
-  'getEducation', 'getHrHistory', 'getNotifications', 'getActivityLog',
-  'getUsers', 'getKpiRecords', 'getClients', 'getTodos', 'getSchedules',
-  'getNotes', 'getReports', 'getSettlements', 'getBillingRecords', 'getCrewSnapshots',
-];
+const STATE = { user: null, crews: [], todos: [], schedules: [] };
 
-// 쓰기(POST) 허용 함수 목록
-const API_POST_WHITELIST = [
-  'login', 'saveCrew', 'deleteCrew',
-  'saveInterview', 'deleteInterview', 'saveEvaluation', 'deleteEvaluation',
-  'saveIssue', 'deleteIssue', 'saveAttendance', 'deleteAttendance',
-  'saveEducation', 'deleteEducation', 'saveHrHistory', 'deleteHrHistory',
-  'saveNotification', 'resolveNotification', 'deleteNotification', 'saveUser',
-  'saveKpiRecord', 'deleteKpiRecord', 'saveSensitiveInfo',
-  'saveClient', 'deleteClient', 'saveTodoGAS', 'deleteTodoGAS',
-  'saveScheduleGAS', 'deleteScheduleGAS', 'saveNoteGAS', 'deleteNoteGAS',
-  'saveReport', 'deleteReport', 'saveSettlement', 'deleteSettlement',
-  'saveBillingRecord', 'deleteBillingRecord', 'saveCrewSnapshot',
-];
+const PAGE_TITLES = { dashboard: '대시보드', crews: '크루 관리', schedule: '일정 · 할일' };
 
-function apiJson_(obj) {
-  return ContentService.createTextOutput(JSON.stringify(obj))
-    .setMimeType(ContentService.MimeType.JSON);
+// ── 공통 유틸 ──
+function fmtDate(v) { return v ? String(v).slice(0, 10) : ''; }
+function todayStr() { return new Date().toISOString().slice(0, 10); }
+function toast(msg, type = 'success') {
+  const el = document.createElement('div');
+  el.className = `toast ${type}`;
+  el.textContent = msg;
+  document.getElementById('toast-container').appendChild(el);
+  setTimeout(() => el.remove(), 2800);
+}
+function openModal(id) { document.getElementById(id).classList.add('show'); }
+function closeModal(id) { document.getElementById(id).classList.remove('show'); }
+function confirmDelete(msg, onOk) {
+  document.getElementById('confirm-msg').innerHTML = msg;
+  document.getElementById('confirm-ok').onclick = () => { closeModal('modal-confirm'); onOk(); };
+  openModal('modal-confirm');
+}
+function calcTenure(d) {
+  if (!d) return '—';
+  const days = Math.floor((new Date() - new Date(d)) / 864e5);
+  if (days < 0 || isNaN(days)) return '—';
+  const y = Math.floor(days / 365), m = Math.floor((days % 365) / 30);
+  return y > 0 ? `${y}년 ${m}개월` : m > 0 ? `${m}개월` : `${days}일`;
+}
+function jobStyle(job) {
+  if (job === '스낵') return { cls: 'snack', label: '스낵' };
+  if (job === '가든') return { cls: 'garden', label: '가든' };
+  if (job === '총무지원') return { cls: 'support', label: '총무지원' };
+  return { cls: 'none', label: '미설정' };
+}
+function jobTag(job) {
+  const s = jobStyle(job);
+  return `<span class="job-tag ${s.cls}">${s.cls !== 'none' ? '<span class="d"></span>' : ''}${s.label}</span>`;
 }
 
-function apiDispatch_(fn, args, whitelist) {
-  if (whitelist.indexOf(fn) === -1) {
-    return apiJson_({ error: true, message: '허용되지 않은 함수입니다: ' + fn });
-  }
+// ── 로그인 ──
+async function doLogin() {
+  const email = document.getElementById('login-email').value.trim();
+  const pw = document.getElementById('login-pw').value;
+  if (!email || !pw) { toast('이메일과 비밀번호를 입력하세요.', 'error'); return; }
   try {
-    const target = this[fn] || globalThis[fn];
-    if (typeof target !== 'function') {
-      return apiJson_({ error: true, message: '함수를 찾을 수 없습니다: ' + fn });
-    }
-    const result = target.apply(null, args || []);
-    return apiJson_(result);
-  } catch (err) {
-    return apiJson_({ error: true, message: err.message });
+    const res = await call('login', email, pw);
+    if (!res.success) { toast(res.message || '로그인 실패', 'error'); return; }
+    STATE.user = res.user;
+    document.getElementById('sidebar-avatar').textContent = res.user.name.charAt(0);
+    document.getElementById('sidebar-name').textContent = res.user.name;
+    document.getElementById('sidebar-role').textContent =
+      { super: '슈퍼관리자', admin: '팀관리자', viewer: '일반열람자' }[res.user.role] || res.user.role;
+    document.getElementById('login-screen').style.display = 'none';
+    document.getElementById('app').style.display = 'block';
+    navigate('dashboard');
+    startClock();
+  } catch (e) {
+    toast('로그인 오류: ' + e.message, 'error');
   }
 }
-
-// ── GET: 조회 전용, 쿼리스트링 ?fn=getCrews&args=[]  ──
-function apiHandleGet(e) {
-  const fn = e.parameter.fn;
-  let args = [];
-  if (e.parameter.args) {
-    try { args = JSON.parse(e.parameter.args); } catch (err) { args = []; }
-  }
-  return apiDispatch_(fn, args, API_GET_WHITELIST);
+function doLogout() {
+  STATE.user = null;
+  document.getElementById('login-screen').style.display = 'flex';
+  document.getElementById('app').style.display = 'none';
 }
 
-// ── POST: 쓰기 전용, body = {"fn":"saveCrew","args":[{...}]} ──
-function apiHandlePost(e) {
-  let body;
-  try { body = JSON.parse(e.postData.contents); }
-  catch (err) { return apiJson_({ error: true, message: 'JSON 파싱 오류: ' + err.message }); }
-  return apiDispatch_(body.fn, body.args, API_POST_WHITELIST);
+// ── 네비게이션 ──
+function navigate(page) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.getElementById('page-' + page)?.classList.add('active');
+  document.querySelector(`[data-page="${page}"]`)?.classList.add('active');
+  document.getElementById('topbar-title').textContent = PAGE_TITLES[page] || page;
+  closeSidebar();
+  loadPage(page);
+}
+function loadPage(page) {
+  const map = { dashboard: loadDashboard, crews: loadCrews, schedule: loadSchedulePage };
+  if (map[page]) map[page]();
+}
+function openSidebar() { document.getElementById('sidebar').classList.add('open'); }
+function closeSidebar() { document.getElementById('sidebar').classList.remove('open'); }
+
+function startClock() {
+  const el = document.getElementById('topbar-time');
+  const tick = () => {
+    const now = new Date();
+    const wd = ['일', '월', '화', '수', '목', '금', '토'][now.getDay()];
+    el.textContent = `${fmtDate(now)} (${wd}) ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+  };
+  tick();
+  setInterval(tick, 30000);
 }
 
-// ────────────────────────────────────────────────────────────
-// 아래 doGet / doPost 를 그대로 쓰려면, 기존 Code.gs에 있는
-// doGet(e) 함수 이름을 지우거나 doGetPage(e) 등으로 바꿔주세요.
-// (Apps Script는 같은 이름의 함수가 두 파일에 있으면 배포 시 충돌합니다)
-// ────────────────────────────────────────────────────────────
-function doGet(e) {
-  if (e && e.parameter && e.parameter.fn) {
-    return apiHandleGet(e);
-  }
-  // fn 파라미터가 없을 때는 기존처럼 아무 데이터도 없는 안내 응답
-  return apiJson_({ ok: true, message: '스낵앤가든 API 서버가 정상 동작 중입니다.' });
+// ── 대시보드 ──
+let _donutChart = null;
+async function loadDashboard() {
+  const grid = document.getElementById('stat-grid');
+  grid.innerHTML = '<div class="spinner"></div>';
+  let d;
+  try { d = await call('getDashboardData'); }
+  catch (e) { grid.innerHTML = `<p style="color:var(--danger);font-size:.82rem">로드 실패: ${e.message}</p>`; return; }
+
+  grid.innerHTML = `
+    <div class="stat-card accent"><div class="stat-label">전체 크루</div><div class="stat-val">${d.totalCrews}</div></div>
+    <div class="stat-card"><div class="stat-label">미처리 이슈</div><div class="stat-val">${d.unprocIssueCount}</div></div>
+    <div class="stat-card"><div class="stat-label">이번 달 면담</div><div class="stat-val">${d.monthInterviewCount}</div></div>
+    <div class="stat-card"><div class="stat-label">이번 달 평가</div><div class="stat-val">${d.monthEvalCount}</div></div>
+    <div class="stat-card"><div class="stat-label">신규 크루(30일)</div><div class="stat-val">${d.newCrewCount}</div></div>
+  `;
+
+  try {
+    STATE.crews = await call('getCrews') || [];
+  } catch (e) { STATE.crews = []; }
+
+  renderDisabilityDonut();
+  renderDashSchedule();
+  renderDashTodos();
 }
 
-function doPost(e) {
-  return apiHandlePost(e);
+function renderDisabilityDonut() {
+  const active = STATE.crews.filter(c => c['상태'] !== '퇴사');
+  const dis = active.filter(c => c['장애여부'] === '장애').length;
+  const non = active.filter(c => c['장애여부'] === '비장애').length;
+  const legend = document.getElementById('donut-legend');
+  const total = active.length || 1;
+  legend.innerHTML = [
+    { l: '장애', c: dis, col: 'var(--accent)' },
+    { l: '비장애', c: non, col: 'var(--job-support)' },
+  ].map(x => `
+    <div style="display:flex;align-items:center;gap:8px;font-size:.8rem;margin-bottom:8px">
+      <span style="width:9px;height:9px;border-radius:50%;background:${x.col};flex-shrink:0"></span>
+      <span style="flex:1;color:var(--text-secondary)">${x.l}</span>
+      <span style="font-family:var(--font-mono);font-weight:600">${x.c}명</span>
+      <span style="font-size:.72rem;color:var(--text-muted);min-width:34px;text-align:right">${Math.round(x.c / total * 100)}%</span>
+    </div>`).join('');
+
+  const ctx = document.getElementById('chart-donut');
+  if (!ctx || typeof Chart === 'undefined') return;
+  if (_donutChart) _donutChart.destroy();
+  _donutChart = new Chart(ctx, {
+    type: 'doughnut',
+    data: { labels: ['장애', '비장애'], datasets: [{ data: [dis, non], backgroundColor: ['#5dcaa5', '#4a9bd9'], borderWidth: 3, borderColor: '#16171a' }] },
+    options: { responsive: true, maintainAspectRatio: false, cutout: '68%', plugins: { legend: { display: false } } },
+  });
 }
+
+function renderDashSchedule() {
+  const el = document.getElementById('dash-schedule');
+  const list = STATE.schedules.slice().sort((a, b) => (a.date + (a.time || '')) > (b.date + (b.time || '')) ? 1 : -1)
+    .filter(s => s.date >= todayStr()).slice(0, 5);
+  if (!list.length) { el.innerHTML = '<p style="color:var(--text-muted);font-size:.8rem;text-align:center;padding:16px">예정된 일정 없음</p>'; return; }
+  el.innerHTML = list.map(s => `
+    <div style="display:flex;align-items:center;gap:9px;padding:8px 0;border-bottom:1px solid var(--border)">
+      <span style="font-family:var(--font-mono);font-size:.7rem;color:var(--text-muted);min-width:70px">${s.date.slice(5)} ${s.time || ''}</span>
+      <span style="font-size:.82rem;flex:1">${s.title}</span>
+    </div>`).join('');
+}
+function
